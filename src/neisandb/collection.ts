@@ -546,6 +546,31 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 		});
 	}
 
+	async findOneAndMap<T>(
+		id: number,
+		mapper: ModelMapper<Schema, Instance, T>,
+	): Promise<T | undefined>;
+	async findOneAndMap<T>(
+		predicate: SchemaPredicate<Schema>,
+		mapper: ModelMapper<Schema, Instance, T>,
+	): Promise<T | undefined>;
+	async findOneAndMap<T>(
+		search: number | SchemaPredicate<Schema>,
+		mapper: ModelMapper<Schema, Instance, T>,
+	): Promise<T | undefined> {
+		const match =
+			typeof search === "number"
+				? await this.findOne(search)
+				: await this.findOne(search);
+    if (!match) return;
+    
+    try {
+      return await mapper(match)
+    } catch {
+      return;
+    }
+	}
+
 	async findOneAndUpdate(
 		id: number,
 		updater: ModelUpdater<Schema, Instance>,
