@@ -32,8 +32,8 @@
     "bun",
     "typescript",
     "database",
-    "message-pack",
-    "serialization"
+    "serialization",
+    "file-based"
   ],
   "devDependencies": {
     "@biomejs/biome": "2.3.4",
