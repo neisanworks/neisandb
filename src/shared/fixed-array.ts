@@ -15,6 +15,10 @@ export class FixedArray<T = string> {
 		return this.entries[Symbol.iterator]();
 	}
 
+	reversedEntries(): IterableIterator<T> {
+		return this.entries.slice().reverse()[Symbol.iterator]();
+	}
+
 	get size(): number {
 		return this.entries.length;
 	}

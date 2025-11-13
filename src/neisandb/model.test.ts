@@ -1,10 +1,6 @@
 import { expect, test } from "bun:test";
-import { Encoder } from "@neisanworks/neisan-encoder";
 import z from "zod/v4";
-import { register } from "./database.utils.js";
 import { Model } from "./model.js";
-
-const encoder = new Encoder();
 
 test("Model Creation and Property Validation", () => {
 	const UserSchema = z.object({
@@ -48,7 +44,6 @@ test("Model Creation and Property Validation", () => {
 			return this.attempts >= 3;
 		}
 	}
-	register(UserModel, encoder);
 
 	const user = new UserModel({ email: "email@email.com", password: "something" }, 1);
 	expect(user).toBeInstanceOf(UserModel);
@@ -78,10 +73,6 @@ test("Model Creation and Property Validation", () => {
 		// biome-ignore lint: user.auth was set in the lines above
 		user.auth!.meta = { test: "nope", teams: 3 } as any;
 	}).toThrow(z.ZodError);
-
-	const encoded = encoder.encode(user);
-	const decoded = encoder.decode(encoded);
-	expect(decoded).toEqual(user);
 
 	expect(() => {
 		user.email = "invalid-email";

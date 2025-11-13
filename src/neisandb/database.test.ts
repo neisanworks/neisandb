@@ -91,6 +91,7 @@ test("DataBase Test", async () => {
 	expect(update.success).toBe(true);
 	assert(update.success === true);
 	expect(update.data).toBeInstanceOf(UserModel);
+	await Users.flush();
 
 	const deleted = await Users.findAndDelete((user) => user.email === "email@email.com");
 	expect(deleted.success).toBe(true);

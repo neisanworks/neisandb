@@ -61,7 +61,6 @@ export type DSOptions<Schema extends z.ZodObject, Instance extends ModelData<Sch
 
 export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Schema>> {
 	private readonly path: string;
-	private readonly name: string;
 
 	private readonly limiter: LimitFunction;
 	private readonly encoder = new Encoder();
@@ -92,7 +91,6 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 
 	constructor(db: DataBase, options: DSOptions<Schema, Instance>) {
 		this.path = path.join(db.directory, "data", `${options.name}.nsdb`);
-		this.name = options.name;
 
 		this.limiter = db.limiter;
 
@@ -390,7 +388,7 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 
 			if (this.tree.size >= this.treesize) {
 				await this.#flush(this.lsn);
-				if (!this.cache.full) this.cache.insert(this.tree);
+				this.cache.insert(this.tree);
 				this.tree = new this.Tree();
 			} else {
 				this.flushTimeout = setTimeout(async () => {
@@ -445,15 +443,9 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 			const inMemory = await findRecord(this.tree);
 			if (inMemory) return inMemory;
 
-			for (let i = this.cache.size - 1; i >= 0; i--) {
-				const tree = this.cache.get(i);
-				assert(tree instanceof DataTree);
+			for (const tree of this.cache.reversedEntries()) {
 				const cached = await findRecord(tree);
-				if (cached) {
-					this.cache.entries.splice(i, 1);
-					this.cache.entries.push(tree);
-					return cached;
-				}
+				if (cached) return cached;
 			}
 
 			try {
@@ -484,10 +476,7 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 					assert(tree instanceof DataTree);
 
 					const onDisk = await findRecord(tree);
-					if (onDisk) {
-						this.cache.insert(tree);
-						return onDisk;
-					}
+					if (onDisk) return onDisk;
 
 					position -= this.pagesize;
 				}
@@ -528,7 +517,7 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 
 				if (this.tree.size >= this.treesize) {
 					await this.#flush(this.lsn);
-					if (!this.cache.full) this.cache.insert(this.tree);
+					this.cache.insert(this.tree);
 					this.tree = new this.Tree();
 				} else {
 					this.flushTimeout = setTimeout(async () => {
@@ -565,7 +554,7 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 
 			if (this.tree.size >= this.treesize) {
 				await this.#flush(this.lsn);
-				if (!this.cache.full) this.cache.insert(this.tree);
+				this.cache.insert(this.tree);
 				this.tree = new this.Tree();
 			} else {
 				this.flushTimeout = setTimeout(async () => {
@@ -613,6 +602,11 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 
 			await match(this.tree);
 
+			if (lsn + this.start < this.treesize) {
+				const limited = matches.slice(options.offset ?? 0, options.limit ?? Infinity);
+				return limited.length > 0 ? limited : undefined;
+			}
+
 			try {
 				await fs.access(this.path);
 			} catch {
@@ -620,10 +614,12 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 				return limited.length > 0 ? limited : undefined;
 			}
 
-			let position = this.#position(lsn) - 1;
+			let position = this.#position(lsn);
 			if (position < 0) {
 				const limited = matches.slice(options.offset ?? 0, options.limit ?? Infinity);
 				return limited.length > 0 ? limited : undefined;
+			} else if (position === this.filesize - this.pagesize) {
+				position -= this.pagesize;
 			}
 
 			const file = await fs.open(this.path, "r");
@@ -740,7 +736,7 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 
 					if (this.tree.size >= this.treesize) {
 						await this.#flush(this.lsn);
-						if (!this.cache.full) this.cache.insert(this.tree);
+						this.cache.insert(this.tree);
 						this.tree = new this.Tree();
 					}
 
@@ -779,7 +775,7 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 
 				if (this.tree.size >= this.treesize) {
 					await this.#flush(this.lsn);
-					if (!this.cache.full) this.cache.insert(this.tree);
+					this.cache.insert(this.tree);
 					this.tree = new this.Tree();
 				}
 			});
