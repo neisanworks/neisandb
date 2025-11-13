@@ -1,0 +1,62 @@
+{
+  "name": "@neisanworks/neisandb",
+  "description": "Embedded JSON-first database for TypeScript with Zod validation, model classes, async-safe operations, and blazing-fast lookups.",
+  "version": "0.1.0",
+  "author": "@neisanworks",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc",
+    "clean": "rm -rf dist",
+    "prepare": "bun run build",
+    "typecheck": "tsc --noEmit"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "engines": {
+    "bun": "^1.0.0",
+    "node": ">=18"
+  },
+  "keywords": [
+    "bun",
+    "typescript",
+    "database",
+    "message-pack",
+    "serialization"
+  ],
+  "devDependencies": {
+    "@biomejs/biome": "2.3.4",
+    "@types/bun": "latest",
+    "ts-patch": "^3.3.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@neisanworks/neisan-encoder": "^0.1.0",
+    "@tylerbu/sorted-btree-es6": "^1.8.0"
+  },
+  "private": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/@neisanworks/neisandb.git"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com/"
+  },
+  "bugs": {
+    "url": "https://github.com/@neisanworks/neisandb/issues"
+  },
+  "homepage": "https://github.com/@neisanworks/neisandb#readme"
+}
