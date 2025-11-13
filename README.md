@@ -90,7 +90,8 @@ export const Users = db.collection({
 
 ```ts
 // src/lib/remote/auth.remote.ts
-import { error, form } from '$app/server';
+import { error } from '@sveltejs/kit';
+import { form } from '$app/server';
 import { Users } from '$lib/server/database';
 import { LoginSchema } from '$lib/utils/schemas/auth';
 
