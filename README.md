@@ -234,6 +234,7 @@ const users = update.data;
 const deletion = await Users.findOneAndDelete(0);
 // or, Predicate Search, updating the first match
 const deletion = await Users.findOneAndDelete((user, id) => user.email === email);
+
 // Returns UserModel | undefined
 ```
 
