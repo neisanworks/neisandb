@@ -1,2 +1,2 @@
-# neisan-encoder
-A high-performance, zero-copy binary encoder/decoder for JavaScript/TypeScript. Supports primitive types, arrays, maps, sets, objects, and custom classes with automatic prototype preservation. Designed for fast serialization of complex nested structures and persistent storage.
+# neisandb
+A high-performance file-based local database for JavaScript/TypeScript. Leverages classes for models, allowing for methods and virtual properties while maintaining ease of setup.
