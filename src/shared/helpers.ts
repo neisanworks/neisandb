@@ -4,3 +4,7 @@ import assert from "node:assert";
 export function assertIsObject(item: unknown, message?: string): asserts item is Object {
 	assert(typeof item === "object" && item !== null && !Array.isArray(item), message);
 }
+
+export async function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}

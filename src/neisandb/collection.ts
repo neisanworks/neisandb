@@ -3,11 +3,11 @@ import path from "node:path";
 import { Encoder } from "@neisanworks/neisan-encoder";
 import { BTree } from "@tylerbu/sorted-btree-es6";
 import { Mutex, Semaphore } from "async-mutex";
-import { sleep } from "bun";
 import fs from "fs-extra";
 import type { LimitFunction } from "p-limit";
 import z from "zod/v4";
 import { FixedArray } from "../shared/fixed-array.js";
+import { sleep } from "../shared/helpers.js";
 import {
 	type Data,
 	type Failure,
@@ -562,13 +562,13 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 			typeof search === "number"
 				? await this.findOne(search)
 				: await this.findOne(search);
-    if (!match) return;
-    
-    try {
-      return await mapper(match)
-    } catch {
-      return;
-    }
+		if (!match) return;
+
+		try {
+			return await mapper(match);
+		} catch {
+			return;
+		}
 	}
 
 	async findOneAndUpdate(
