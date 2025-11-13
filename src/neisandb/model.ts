@@ -95,6 +95,10 @@ export abstract class Model<Schema extends z.ZodObject> {
 		// @ts-expect-error: Must use delete keyword to remove schema from model;
 		delete this.schema;
 	}
+
+	toJSON(): z.core.output<Schema> {
+		return Object.fromEntries(Object.entries(this)) as z.core.output<Schema>;
+	}
 }
 
 // biome-ignore lint: Using Object instead of object to assert item !== null
