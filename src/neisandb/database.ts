@@ -9,16 +9,14 @@ export const DBOptionSchema = z.object({
 	directory: z
 		.string()
 		.regex(/^(\/|\.\/|\.\.\/)?([\w.-]+\/)*[\w.-]+$/)
-		.default(() => __dirname)
+		.default(() => path.join(process.cwd(), "neisandb"))
 		.transform((dir) => path.normalize(dir)),
-	autoload: z.boolean().default(true),
 	concurrency: z.number().min(1).max(100).default(25),
 });
 export type DBOptions = z.input<typeof DBOptionSchema>;
 
 export class DataBase {
 	directory: string;
-	autoload: boolean;
 	limiter: LimitFunction;
 	encoder = new Encoder();
 
@@ -26,7 +24,6 @@ export class DataBase {
 		const params = DBOptionSchema.parse(options ?? {});
 
 		this.directory = params.directory;
-		this.autoload = params.autoload;
 		this.limiter = pLimit(params.concurrency);
 	}
 

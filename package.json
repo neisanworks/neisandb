@@ -1,7 +1,7 @@
 {
   "name": "@neisanworks/neisandb",
   "description": "Embedded file-based database for Javascript/TypeScript with Zod validation, model classes, async-safe operations, and blazing-fast lookups.",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "author": "@neisanworks",
   "license": "MIT",
   "type": "module",
