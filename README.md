@@ -10,9 +10,11 @@
 
 ## Features
 
+- Fully type-safe via TypeScript + Zod
 - Strong runtime validation
 - Class-based models with methods & virtuals
 - Concurrency-safe (async-mutex + p-limit)
+- Atomic file writes (temp + rename)
 - File-backed, no server or DB setup
 - Perfect for CLIs, bots, and tools
 
@@ -34,7 +36,7 @@ pnpm add @neisanworks/neisandb
 
 ```ts
 // src/server/database/models/user.ts
-import { Data, Model } from '@neisanworks/neisandb';
+import { type Data, Model } from '@neisanworks/neisandb';
 import * as z from 'zod/v4';
 
 export const UserSchema = z.object({
@@ -133,10 +135,11 @@ Each collection is stored in its own `.nsdb` file under your folder path
 ```
 neisandb
 ├── data
-│   └── users.nsdb # Users datastore file
+│   └── users.tmp # Temporary file cteated during atomic file writing
+│   └── users.nsdb # Users collection file
 ├── models
-│   └── user.ts # Users datastore model
-└── index.ts # Database initialization and datastore exporting (optional; datastores can be created and exported anywhere)
+│   └── user.ts # Users collection model
+└── index.ts # Database initialization and collection exporting (optional; collection can be created and exported anywhere)
 ```
 
 ---

@@ -3,6 +3,7 @@ import path from "node:path";
 import { Encoder } from "@neisanworks/neisan-encoder";
 import { BTree } from "@tylerbu/sorted-btree-es6";
 import { Mutex, Semaphore } from "async-mutex";
+import { sleep } from "bun";
 import fs from "fs-extra";
 import type { LimitFunction } from "p-limit";
 import z from "zod/v4";
@@ -55,11 +56,10 @@ export type DSOptions<Schema extends z.ZodObject, Instance extends ModelData<Sch
 	schema: Schema;
 	autoload?: boolean;
 	uniques?: Array<SKey<Schema>>;
-	indexed?: Array<SKey<Schema>>;
-	idStart?: 0 | 1;
 };
 
 export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Schema>> {
+	private readonly temppath: string;
 	private readonly path: string;
 
 	private readonly limiter: LimitFunction;
@@ -76,12 +76,12 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 	private readonly treesize: number = 1500;
 	private readonly pagesize: number = 1024 * 256;
 
-	private readonly start: 0 | 1;
 	private id: number = -1;
 	private lsn: number = -1;
 	private filesize: number = 0;
 
 	private flushTimeout: NodeJS.Timeout | undefined;
+	private fbuffer = Buffer.alloc(this.pagesize);
 	private lastFlushed: number = -1;
 
 	readonly schema: Schema;
@@ -90,6 +90,7 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 	readonly uniques: Set<SKey<Schema>>;
 
 	constructor(db: DataBase, options: DSOptions<Schema, Instance>) {
+		this.temppath = path.join(db.directory, "data", `${options.name}.tmp`);
 		this.path = path.join(db.directory, "data", `${options.name}.nsdb`);
 
 		this.limiter = db.limiter;
@@ -105,20 +106,42 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 		})(this.Tree);
 		this.tree = new this.Tree();
 
-		this.start = options.idStart ?? 0;
-
 		this.schema = options.schema;
 		this.model = options.model;
 
 		this.uniques = new Set(options.uniques);
 
+		fs.ensureDirSync(path.dirname(this.path));
+
+		if (fs.existsSync(this.temppath)) {
+			const tempsize = fs.statSync(this.temppath).size;
+			if (tempsize % this.pagesize === 0) {
+				console.log(`Recovering ${options.name} data...`);
+				for (let attempts = 0; attempts < 3; attempts++) {
+					try {
+						fs.renameSync(this.temppath, this.path);
+						break;
+					} catch (error: any) {
+						console.error(`Failed to recover ${options.name} data`, error);
+						if (attempts < 2) {
+							console.log(
+								`Retrying ${options.name} data recovery: Attempt ${attempts + 2} of 3...`,
+							);
+						} else {
+							console.log(`Failed to recover ${options.name} data after 3 attempts`);
+							fs.removeSync(this.temppath);
+						}
+					}
+				}
+			}
+		}
+
 		if (!fs.existsSync(this.path)) return;
 
-		const size = fs.statSync(this.path).size;
-		this.filesize = size;
-		if (size === 0) return;
+		this.filesize = fs.statSync(this.path).size;
+		if (this.filesize === 0) return;
 
-		const pages = Math.floor(size / this.pagesize);
+		const pages = Math.floor(this.filesize / this.pagesize);
 		const position = (pages - 1) * this.pagesize;
 		if (position < 0) return;
 
@@ -188,7 +211,7 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 
 	#position(lsn: number): number {
 		lsn = Math.max(0, lsn);
-		return Math.floor((lsn - this.start) / this.treesize) * this.pagesize;
+		return Math.floor(lsn / this.treesize) * this.pagesize;
 	}
 
 	async #flush(lsn: number): Promise<void> {
@@ -199,28 +222,53 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 		await this.flusher.runExclusive(async () => {
 			await fs.ensureFile(this.path);
 
+			try {
+				await fs.copyFile(this.path, this.temppath, fs.constants.COPYFILE_FICLONE);
+			} catch {
+				return;
+			}
+
+			let size: number;
 			const position = this.#position(lsn);
 
-			const file = await fs.open(this.path, "r+");
+			const temp = await fs.open(this.temppath, "r+");
 			try {
+				this.fbuffer.fill(0);
 				const encoded = this.encoder.encode(this.tree);
 				if (encoded.length > this.pagesize - 8) {
 					throw new Error("Encoded tree too large for page");
 				}
 
-				const buffer = Buffer.alloc(this.pagesize);
-				const view = new DataView(buffer.buffer);
+				const view = new DataView(this.fbuffer.buffer);
 				view.setUint32(0, encoded.length, true);
-				encoded.copy(buffer, 8);
+				encoded.copy(this.fbuffer, 8);
 
-				await fs.write(file, buffer, 0, this.pagesize, position);
-
-				const filesize = position + this.pagesize;
-				if (filesize > this.filesize) this.filesize = filesize;
-
-				this.lastFlushed = lsn;
+				await fs.write(temp, this.fbuffer, 0, this.pagesize, position);
+				size = (await fs.stat(this.temppath)).size;
+				assert(size % this.pagesize === 0);
 			} finally {
-				await fs.close(file);
+				await fs.fsync(temp);
+				await fs.close(temp);
+			}
+
+			const directory = await fs.open(path.dirname(this.path), "r");
+			try {
+				await fs.fsync(directory);
+			} finally {
+				await fs.close(directory);
+			}
+
+			for (let attempt = 0; attempt < 3; attempt++) {
+				try {
+					await fs.rename(this.temppath, this.path);
+					this.filesize = size;
+					this.lastFlushed = lsn;
+					break;
+				} catch (error: any) {
+					console.error("Flush failed on .tmp rename:", error);
+					await sleep(100);
+					console.log(`Flushing: Attempt ${attempt + 2} of 3...`);
+				}
 			}
 		});
 	}
@@ -241,7 +289,7 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 
 		const check = async (tree: DataTree<Schema>) => {
 			for (const [key, record] of tree.entriesReversed()) {
-				if (conflict) break;
+				if (conflict || seen.size - 1 === this.id) break;
 				if (seen.has(key.id)) continue;
 				seen.add(key.id);
 
@@ -267,7 +315,7 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 			return;
 		}
 
-		let position = this.#position(this.lsn) - this.filesize;
+		let position = this.#position(this.lsn);
 		if (position > this.filesize) return;
 
 		const file = await fs.open(this.path, "r");
@@ -292,6 +340,8 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 				await check(tree);
 				if (conflict) return this.#uniqueConflictFailure(conflict);
 
+				if (seen.size - 1 === this.id) return;
+
 				position -= this.pagesize;
 			}
 		} finally {
@@ -308,6 +358,7 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 
 			const match = async (tree: DataTree<Schema>) => {
 				for (const [key, record] of tree.entriesReversed()) {
+					if (seen.size - 1 === this.id) break;
 					if (seen.has(key.id)) continue;
 					seen.add(key.id);
 
@@ -349,6 +400,8 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 					assert(tree instanceof DataTree);
 
 					await match(tree);
+
+					if (seen.size - 1 === this.id) return count;
 
 					position -= this.pagesize;
 				}
@@ -419,7 +472,7 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 					let match: Instance | undefined;
 
 					for (const [key, record] of tree.entriesReversed()) {
-						if (match) break;
+						if (match || seen.size - 1 === this.id) break;
 						if (key.lsn > lsn || seen.has(key.id)) continue;
 						seen.add(key.id);
 
@@ -443,10 +496,15 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 			const inMemory = await findRecord(this.tree);
 			if (inMemory) return inMemory;
 
+			if (seen.size - 1 === this.id) return;
+
 			for (const tree of this.cache.reversedEntries()) {
+				if (seen.size - 1 === this.id) break;
 				const cached = await findRecord(tree);
 				if (cached) return cached;
 			}
+
+			if (seen.size - 1 === this.id) return;
 
 			try {
 				await fs.access(this.path);
@@ -477,6 +535,8 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 
 					const onDisk = await findRecord(tree);
 					if (onDisk) return onDisk;
+
+					if (seen.size - 1 === this.id) return;
 
 					position -= this.pagesize;
 				}
@@ -584,6 +644,7 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 
 			const match = async (tree: DataTree<Schema>) => {
 				for (const [key, record] of tree.entriesReversed()) {
+					if (seen.size - 1 === this.id) break;
 					if (seen.has(key.id)) continue;
 					seen.add(key.id);
 
@@ -602,7 +663,7 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 
 			await match(this.tree);
 
-			if (lsn + this.start < this.treesize) {
+			if (seen.size - 1 === this.id) {
 				const limited = matches.slice(options.offset ?? 0, options.limit ?? Infinity);
 				return limited.length > 0 ? limited : undefined;
 			}
@@ -642,6 +703,8 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 					assert(tree instanceof DataTree);
 
 					await match(tree);
+
+					if (seen.size - 1 === this.id) break;
 
 					position -= this.pagesize;
 				}
