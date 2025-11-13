@@ -35,7 +35,7 @@ pnpm add @neisanworks/neisandb
 ### 2. Define a Schema and Model
 
 ```ts
-// src/server/database/models/user.ts
+// src/lib/server/database/models/user.ts
 import { type Data, Model } from '@neisanworks/neisandb';
 import * as z from 'zod/v4';
 
@@ -69,7 +69,7 @@ export class UserModel extends Model<UserSchema> {
 ### 3. Initialize the Database and Collection(s)
 
 ```ts
-// src/server/database/index.ts
+// src/lib/server/database/index.ts
 import { Database } from '@neisanworks/neisandb'
 import { UserModel, UserSchema } from './models/user.ts'
 
@@ -165,6 +165,8 @@ const user = await Users.insert({ email: 'email@email.com', password: '$omePassw
 const user = await Users.findOne(0);
 // or, Predicate Search, returning the first to match
 const user = await Users.findOne((user, id) => user.email === email);
+
+// Returns UserModel | undefined if not found
 ```
 
 - `find`: returns multiple models from the database
@@ -178,6 +180,8 @@ const users = await Users.find((user, id) => id > 10);
 const users = await Users.find({ offset: 5, limit: 10 });
 // or
 const users = await Users.find((user, id) => user.attempts < 3, { offset: 5, limit: 10 });
+
+// Returns Array<UserModel> | undefined if none are found or pagination is out of bounds
 ```
 
 ### Update Methods
@@ -195,7 +199,7 @@ const update = await Users.findOneAndUpdate((user, id) => user.email === email, 
   return user;
 });
 
-// Returns { success: false, errors: { general } | { [keyof Schema]: string } } || { success: true, data: UserModel }
+// Returns { success: false, errors: Record<keyof Schema | 'general', string> || { success: true, data: UserModel }
 if (!update.success) {
   error(406, update.errors);
 };
@@ -215,7 +219,7 @@ const update = await Users.findAndUpdate((user, id) => user.attempts >= 3, (user
   return user;
 });
 
-// Returns { success: false, errors: { general } | { [keyof Schema]: string } } || { success: true, data: Array<UserModel> }
+// Returns { success: false, errors: Record<keyof Schema | 'general', string> } || { success: true, data: Array<UserModel> }
 if (!update.success) {
   error(406, update.errors);
 };
@@ -239,7 +243,7 @@ const deletion = await Users.findOneAndDelete((user, id) => user.email === email
 // Predicate Search, deleting the matching records
 const deletion = await Users.findAndDelete((user, id) => user.attempts >= 3);
 
-// Returns { success: false, errors: { general } | { [keyof Schema]: string } } || { success: true, data: Array<UserModel> }
+// Returns { success: false, errors: Record<keyof Schema | 'general', string> } || { success: true, data: Array<UserModel> }
 if (!deletion.success) {
   error(406, update.errors);
 };
@@ -272,7 +276,7 @@ const users = await Users.find((user, id) => user.attempts >= 3, (user) => {
   return `User with email ${user.email} unlocked`;
 }, { offset: 5, limit: 10 });
 
-// Returns Array<UserModel> | undefined if no matches
+// Returns Array<UserModel> | undefined if no matches or pagination is out of bounds
 ```
 
 ### Additional Methods
