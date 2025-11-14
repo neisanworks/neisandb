@@ -592,10 +592,10 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 			if (!found) return this.#noMatchFailure();
 
 			try {
-				const updated = await updater(found);
-				const record = this.schema.parse(updated);
+				await updater(found);
+				const record = this.schema.parse(found);
 
-				const conflict = await this.#checkUniques(record, updated.id);
+				const conflict = await this.#checkUniques(record, found.id);
 				if (conflict) return conflict;
 
 				this.tree.set({ id: found.id, lsn: this.nextLSN }, record);
@@ -610,7 +610,7 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 					}, 1000 * 30);
 				}
 
-				return { success: true, data: updated };
+				return { success: true, data: found };
 			} catch (error: any) {
 				if (error instanceof z.ZodError) {
 					return this.#schemaFailure(error);
@@ -814,8 +814,8 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 				if (error) return;
 
 				try {
-					const updated = await updater(match);
-					const record = this.schema.parse(updated);
+					await updater(match);
+					const record = this.schema.parse(match);
 
 					const conflict = await this.#checkUniques(record, match.id);
 					if (conflict) return conflict;
@@ -828,7 +828,7 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 						this.tree = new this.Tree();
 					}
 
-					results.push(updated);
+					results.push(match);
 				} catch (e: any) {
 					if (e instanceof z.ZodError) {
 						error = this.#schemaFailure(e);

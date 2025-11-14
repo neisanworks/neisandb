@@ -86,11 +86,11 @@ test("DataBase Test", async () => {
 
 	const update = await Users.findOneAndUpdate(0, (user) => {
 		user.email = "newemail@email.com";
-		return user;
 	});
 	expect(update.success).toBe(true);
 	assert(update.success === true);
 	expect(update.data).toBeInstanceOf(UserModel);
+	expect(update.data.email).toBe("newemail@email.com");
 	await Users.flush();
 
 	const deleted = await Users.findAndDelete((user) => user.email === "email@email.com");

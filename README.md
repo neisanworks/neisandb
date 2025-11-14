@@ -41,7 +41,9 @@ import * as z from 'zod/v4';
 
 export const UserSchema = z.object({
   email: z.email(),
-  password: z.string().regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/),
+  password: z
+    .string()
+    .regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/),
   attempts: z.number().min(0).default(0)
 });
 export type UserSchema = typeof UserSchema;
@@ -191,12 +193,10 @@ const users = await Users.find((user, id) => user.attempts < 3, { offset: 5, lim
 // ID Query
 const update = await Users.findOneAndUpdate(0, (user) => {
   user.email = 'newemail@email.com'; // validation occurs at the property-level in its setter-method
-  return user; // must return user for update to occur
 });
 // or, Predicate Search, updating the first match
 const update = await Users.findOneAndUpdate((user, id) => user.email === email, (user) => {
   user.email = 'newemail@email.com';
-  return user;
 });
 
 // Returns { success: false, errors: Record<keyof Schema | 'general', string> || { success: true, data: UserModel }
@@ -211,12 +211,10 @@ const user = update.data;
 // No Query
 const update = await Users.findAndUpdate((user) => {
   user.attempts = 3; // locks all users
-  return user;
 });
 // or, Predicate Search, updating the matching records
 const update = await Users.findAndUpdate((user, id) => user.attempts >= 3, (user) => {
   user.attempts = 0; // unlocks all locked users
-  return user;
 });
 
 // Returns { success: false, errors: Record<keyof Schema | 'general', string> } || { success: true, data: Array<UserModel> }
@@ -251,7 +249,23 @@ if (!deletion.success) {
 const users = deletion.data;
 ```
 
-### Map Method
+### Map Methods
+
+- `findOneAndMap`: finds a record, transform it, and return transformed data
+```ts
+// ID Query
+const users = await Users.findOneAndMap(0, (user) => {
+  if (user.locked) return `User with email ${user.email} locked`;
+  return `User with email ${user.email} unlocked`;
+});
+// or, Predicate Search, transforming the first matching model
+const users = await Users.findOneAndMap((user, id) => user.attempts >= 3, (user) => {
+  if (user.locked) return `User with email ${user.email} locked`;
+  return `User with email ${user.email} unlocked`;
+});
+
+// Returns UserModel | undefined if no matches
+```
 
 - `findAndMap`: finds multiple records, map over them, and return the mutated data
 ```ts
@@ -261,7 +275,7 @@ const users = await Users.findAndMap((user) => {
   return `User with email ${user.email} unlocked`;
 });
 // or, Predicate Search, returning all matching models from the database
-const users = await Users.find((user, id) => user.attempts >= 3, (user) => {
+const users = await Users.findAndMap((user, id) => user.attempts >= 3, (user) => {
   if (user.locked) return `User with email ${user.email} locked`;
   return `User with email ${user.email} unlocked`;
 });
@@ -272,7 +286,7 @@ const users = await Users.findAndMap((user) => {
   return `User with email ${user.email} unlocked`;
 }, { offset: 5, limit: 10 });
 // or
-const users = await Users.find((user, id) => user.attempts >= 3, (user) => {
+const users = await Users.findAndMap((user, id) => user.attempts >= 3, (user) => {
   if (user.locked) return `User with email ${user.email} locked`;
   return `User with email ${user.email} unlocked`;
 }, { offset: 5, limit: 10 });

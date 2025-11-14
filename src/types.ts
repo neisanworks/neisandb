@@ -40,7 +40,7 @@ export type SchemaPredicate<Schema extends z.ZodObject> = (
 export type ModelUpdater<
 	Schema extends z.ZodObject,
 	Instance extends ModelData<Schema>,
-> = (model: Instance) => Instance | Promise<Instance>;
+> = (model: Instance) => any | Promise<any>;
 export type FindOptions = Partial<Record<"limit" | "offset", number>>;
 export type ModelMapper<
 	Schema extends z.ZodObject,
