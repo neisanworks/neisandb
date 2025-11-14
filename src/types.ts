@@ -6,7 +6,7 @@ export type Prettier<T extends Record<PropertyKey, any>> = {
 } & {};
 export type Data = Record<string, any>;
 
-export const NoNegNumSchema = (message?: string) => z.coerce.number().min(0, message);
+export const NoNegNumSchema = (message?: string) => z.coerce.bigint().min(0n, message);
 export type NoNegNumSchema = typeof NoNegNumSchema;
 export const ID = (id: unknown) => NoNegNumSchema("Invalid ID").parse(id);
 export const LSN = (lsn: unknown) => NoNegNumSchema("Invalid LSN").parse(lsn);
@@ -35,7 +35,7 @@ export type ParseErrors<Schema extends z.ZodObject> = Partial<
 // DataStore Types
 export type SchemaPredicate<Schema extends z.ZodObject> = (
 	record: z.core.output<Schema>,
-	id: number,
+	id: bigint,
 ) => boolean | Promise<boolean>;
 export type ModelUpdater<
 	Schema extends z.ZodObject,
@@ -51,9 +51,10 @@ export type ModelMapper<
 // Database Model Types
 export type WithoutID<Schema extends z.ZodObject> = z.core.output<Schema>;
 export type ModelData<Schema extends z.ZodObject> = {
-	id: number;
+	id: bigint;
+	toJSON(): z.core.output<Schema>;
 } & z.core.output<Schema>;
 export type ModelCtor<Schema extends z.ZodObject, Model extends ModelData<Schema>> = new (
 	data: Data,
-	id: number,
+	id: bigint,
 ) => Model;

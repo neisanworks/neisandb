@@ -26,7 +26,7 @@ import {
 import type { DataBase } from "./database.js";
 
 export type DataTreeEntry<Schema extends z.ZodObject> = [
-	Record<"lsn" | "id", number>,
+	Record<"lsn" | "id", bigint>,
 	z.core.output<Schema> | "DELETED",
 ];
 export type DataTreeEntries<Schema extends z.ZodObject> = Array<DataTreeEntry<Schema>>;
@@ -35,24 +35,32 @@ export type DataTreeCtor<Schema extends z.ZodObject> = new (
 ) => DataTree<Schema>;
 
 export class DataTree<Schema extends z.ZodObject> extends BTree<
-	Record<"lsn" | "id", number>,
+	Record<"lsn" | "id", bigint>,
 	z.core.output<Schema> | "DELETED"
 > {
 	constructor(entries?: DataTreeEntries<Schema>) {
 		super(
 			entries,
 			(a, b) => {
-				if (a.id === b.id) return a.lsn - b.lsn;
-				return a.id - b.id;
+				if (a.id === b.id) return a.lsn > b.lsn ? 1 : a.lsn < b.lsn ? -1 : 0;
+				return a.id > b.id ? 1 : a.id < b.id ? -1 : 0;
 			},
 			10,
 		);
 	}
 }
 
+export const UInt64Infinity: bigint = 99999999999999999999n;
+
+export function BigIntMax(...bigints: Array<bigint>): bigint {
+	return bigints.reduce<bigint>((acc, curr) => {
+		return acc > curr ? acc : curr;
+	}, -UInt64Infinity);
+}
+
 export type DSOptions<Schema extends z.ZodObject, Instance extends ModelData<Schema>> = {
 	name: string;
-	model: new (data: Data, id: number) => Instance;
+	model: new (data: Data, id: bigint) => Instance;
 	schema: Schema;
 	autoload?: boolean;
 	uniques?: Array<SKey<Schema>>;
@@ -76,13 +84,14 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 	private readonly treesize: number = 1500;
 	private readonly pagesize: number = 1024 * 256;
 
-	private id: number = -1;
-	private lsn: number = -1;
+	private id: bigint = -1n;
+	private lsn: bigint = -1n;
 	private filesize: number = 0;
 
 	private flushTimeout: NodeJS.Timeout | undefined;
+	private idbuffer = Buffer.alloc(8);
 	private fbuffer = Buffer.alloc(this.pagesize);
-	private lastFlushed: number = -1;
+	private lastFlushed: bigint = -1n;
 
 	readonly schema: Schema;
 	readonly model: ModelCtor<Schema, Instance>;
@@ -115,7 +124,7 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 
 		if (fs.existsSync(this.temppath)) {
 			const tempsize = fs.statSync(this.temppath).size;
-			if (tempsize % this.pagesize === 0) {
+			if (tempsize % this.pagesize === 8) {
 				console.log(`Recovering ${options.name} data...`);
 				for (let attempts = 0; attempts < 3; attempts++) {
 					try {
@@ -141,25 +150,23 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 		this.filesize = fs.statSync(this.path).size;
 		if (this.filesize === 0) return;
 
-		const pages = Math.floor(this.filesize / this.pagesize);
-		const position = (pages - 1) * this.pagesize;
+		const pages = Math.floor((this.filesize - 8) / this.pagesize);
+		const position = (pages - 1) * this.pagesize + 8;
 		if (position < 0) return;
 
 		const file = fs.openSync(this.path, "r");
 		try {
-			const buffer = Buffer.alloc(this.pagesize);
-			fs.readSync(file, buffer, 0, this.pagesize, position);
+			fs.readSync(file, this.idbuffer, 0, 8, 0);
+			this.id = this.idbuffer.readBigUInt64LE(0);
 
-			const length = buffer.subarray(0, 8).readUInt32LE(0);
-			this.tree = this.encoder.decode<DataTree<Schema>>(buffer.subarray(8, length + 8));
+			fs.readSync(file, this.fbuffer, 0, this.pagesize, position);
+			const length = this.fbuffer.subarray(0, 4).readUInt32LE(0);
+			this.tree = this.encoder.decode<DataTree<Schema>>(
+				this.fbuffer.subarray(4, length + 4),
+			);
 			assert(this.tree instanceof DataTree);
 
-			this.id = this.tree.keysArray().reduce<number>((acc, curr) => {
-				return Math.max(acc, curr.id);
-			}, -1);
-			this.lsn = this.tree.keysArray().reduce<number>((acc, curr) => {
-				return Math.max(acc, curr.lsn);
-			}, -1);
+			this.lsn = BigIntMax(...this.tree.keysArray().map((key) => key.lsn));
 			this.lastFlushed = this.lsn;
 
 			if (this.tree.size >= this.treesize) this.tree = new this.Tree();
@@ -168,12 +175,12 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 		}
 	}
 
-	get nextID(): number {
+	get nextID(): bigint {
 		this.id++;
 		return this.id;
 	}
 
-	get nextLSN(): number {
+	get nextLSN(): bigint {
 		this.lsn++;
 		return this.lsn;
 	}
@@ -209,12 +216,13 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 		);
 	}
 
-	#position(lsn: number): number {
-		lsn = Math.max(0, lsn);
-		return Math.floor(lsn / this.treesize) * this.pagesize;
+	#position(lsn: bigint): number {
+		lsn = BigIntMax(0n, lsn);
+		const position = (lsn / BigInt(this.treesize)) * BigInt(this.pagesize);
+		return Number(position) + 8;
 	}
 
-	async #flush(lsn: number): Promise<void> {
+	async #flush(lsn: bigint): Promise<void> {
 		lsn = LSN(lsn);
 
 		if (this.lastFlushed >= lsn) return;
@@ -235,17 +243,21 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 			try {
 				this.fbuffer.fill(0);
 				const encoded = this.encoder.encode(this.tree);
-				if (encoded.length > this.pagesize - 8) {
+				if (encoded.length > this.pagesize - 4) {
 					throw new Error("Encoded tree too large for page");
 				}
 
-				const view = new DataView(this.fbuffer.buffer);
-				view.setUint32(0, encoded.length, true);
-				encoded.copy(this.fbuffer, 8);
+				const fview = new DataView(this.fbuffer.buffer);
+				fview.setUint32(0, encoded.length, true);
+				encoded.copy(this.fbuffer, 4);
 
 				await fs.write(temp, this.fbuffer, 0, this.pagesize, position);
 				size = (await fs.stat(this.temppath)).size;
-				assert(size % this.pagesize === 0);
+				assert(size % this.pagesize === 8);
+
+				const idview = new DataView(this.idbuffer.buffer);
+				idview.setBigUint64(0, this.id, true);
+				await fs.write(temp, this.idbuffer, 0, 8, 0);
 			} finally {
 				await fs.fsync(temp);
 				await fs.close(temp);
@@ -280,25 +292,25 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 
 	async #checkUniques(
 		checked: Data,
-		id: number,
+		id: bigint,
 	): Promise<Failure<ParseErrors<Schema>> | undefined> {
+		if (this.id === -1n) return;
+
 		let conflict: SKey<Schema> | undefined;
-		const seen = new Set<number>();
+		const seen = new Set<bigint>();
 
 		await this.flusher.waitForUnlock();
 
 		const check = async (tree: DataTree<Schema>) => {
 			for (const [key, record] of tree.entriesReversed()) {
-				if (conflict || seen.size - 1 === this.id) break;
+				if (conflict || BigInt(seen.size) >= this.id + 1n) break;
 				if (seen.has(key.id)) continue;
 				seen.add(key.id);
 
+				if (record === "DELETED") continue;
+
 				for (const unique of this.uniques) {
-					if (
-						record !== "DELETED" &&
-						record[unique] === checked[String(unique)] &&
-						key.id !== id
-					) {
+					if (record[unique] === checked[String(unique)] && key.id !== id) {
 						conflict = unique;
 						break;
 					}
@@ -316,7 +328,7 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 		}
 
 		let position = this.#position(this.lsn);
-		if (position > this.filesize) return;
+		if (position >= this.filesize) return;
 
 		const file = await fs.open(this.path, "r");
 
@@ -324,23 +336,23 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 		try {
 			await this.flusher.waitForUnlock();
 
-			while (position >= 0) {
+			while (position >= 8) {
 				const read = await fs.read(file, buffer, 0, this.pagesize, position);
 				if (read.bytesRead === 0) {
 					position -= this.pagesize;
 					continue;
 				}
 
-				const length = buffer.subarray(0, 8).readUInt32LE(0);
+				const length = buffer.subarray(0, 4).readUInt32LE(0);
 				const tree = this.encoder.decode<DataTree<Schema>>(
-					buffer.subarray(8, length + 8),
+					buffer.subarray(4, length + 4),
 				);
 				assert(tree instanceof DataTree);
 
 				await check(tree);
 				if (conflict) return this.#uniqueConflictFailure(conflict);
 
-				if (seen.size - 1 === this.id) return;
+				if (BigInt(seen.size) === this.id + 1n) return;
 
 				position -= this.pagesize;
 			}
@@ -354,11 +366,11 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 	async count(predicate?: SchemaPredicate<Schema>): Promise<number> {
 		return this.reader.runExclusive(async () => {
 			let count: number = 0;
-			const seen = new Set<number>();
+			const seen = new Set<bigint>();
 
 			const match = async (tree: DataTree<Schema>) => {
 				for (const [key, record] of tree.entriesReversed()) {
-					if (seen.size - 1 === this.id) break;
+					if (BigInt(seen.size) === this.id + 1n) break;
 					if (seen.has(key.id)) continue;
 					seen.add(key.id);
 
@@ -386,22 +398,22 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 
 			const buffer = Buffer.alloc(this.pagesize);
 			try {
-				while (position >= 0) {
+				while (position >= 8) {
 					const read = await fs.read(file, buffer, 0, this.pagesize, position);
 					if (read.bytesRead === 0) {
 						position -= this.pagesize;
 						continue;
 					}
 
-					const length = buffer.subarray(0, 8).readUInt32LE(0);
+					const length = buffer.subarray(0, 4).readUInt32LE(0);
 					const tree = this.encoder.decode<DataTree<Schema>>(
-						buffer.subarray(8, length + 8),
+						buffer.subarray(4, length + 4),
 					);
 					assert(tree instanceof DataTree);
 
 					await match(tree);
 
-					if (seen.size - 1 === this.id) return count;
+					if (BigInt(seen.size) === this.id + 1n) return count;
 
 					position -= this.pagesize;
 				}
@@ -413,11 +425,11 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 		});
 	}
 
-	async exists(id: number): Promise<boolean>;
+	async exists(id: bigint): Promise<boolean>;
 	async exists(predicate: SchemaPredicate<Schema>): Promise<boolean>;
-	async exists(search: number | SchemaPredicate<Schema>): Promise<boolean> {
+	async exists(search: bigint | SchemaPredicate<Schema>): Promise<boolean> {
 		const match =
-			typeof search === "number"
+			typeof search === "bigint"
 				? await this.findOne(search)
 				: await this.findOne(search);
 		return match !== undefined;
@@ -434,7 +446,7 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 				return this.#schemaFailure(parsed.error);
 			}
 
-			const conflict = await this.#checkUniques(parsed.data, Infinity);
+			const conflict = await this.#checkUniques(parsed.data, UInt64Infinity);
 			if (conflict) return conflict;
 
 			this.tree.set({ lsn: this.nextLSN, id: this.nextID }, parsed.data);
@@ -453,17 +465,17 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 		});
 	}
 
-	async findOne(id: number): Promise<Instance | undefined>;
+	async findOne(id: bigint): Promise<Instance | undefined>;
 	async findOne(predicate: SchemaPredicate<Schema>): Promise<Instance | undefined>;
-	async findOne(search: number | SchemaPredicate<Schema>): Promise<Instance | undefined> {
+	async findOne(search: bigint | SchemaPredicate<Schema>): Promise<Instance | undefined> {
 		return this.reader.runExclusive(async () => {
-			if (typeof search === "number") {
+			if (typeof search === "bigint") {
 				search = ID(search);
 				if (search > this.id) return;
 			}
 
 			const lsn = this.lsn;
-			const seen = new Set<number>();
+			const seen = new Set<bigint>();
 
 			const findRecord = async (
 				tree: DataTree<Schema>,
@@ -472,7 +484,7 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 					let match: Instance | undefined;
 
 					for (const [key, record] of tree.entriesReversed()) {
-						if (match || seen.size - 1 === this.id) break;
+						if (match || BigInt(seen.size) === this.id + 1n) break;
 						if (key.lsn > lsn || seen.has(key.id)) continue;
 						seen.add(key.id);
 
@@ -496,15 +508,15 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 			const inMemory = await findRecord(this.tree);
 			if (inMemory) return inMemory;
 
-			if (seen.size - 1 === this.id) return;
+			if (BigInt(seen.size) === this.id + 1n) return;
 
 			for (const tree of this.cache.reversedEntries()) {
-				if (seen.size - 1 === this.id) break;
+				if (BigInt(seen.size) === this.id + 1n) break;
 				const cached = await findRecord(tree);
 				if (cached) return cached;
 			}
 
-			if (seen.size - 1 === this.id) return;
+			if (BigInt(seen.size) === this.id + 1n) return;
 
 			try {
 				await fs.access(this.path);
@@ -520,23 +532,23 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 
 			const buffer = Buffer.alloc(this.pagesize);
 			try {
-				while (position >= 0) {
+				while (position >= 8) {
 					const read = await fs.read(file, buffer, 0, this.pagesize, position);
 					if (read.bytesRead === 0) {
 						position -= this.pagesize;
 						continue;
 					}
 
-					const length = buffer.subarray(0, 8).readUInt32LE(0);
+					const length = buffer.subarray(0, 4).readUInt32LE(0);
 					const tree = this.encoder.decode<DataTree<Schema>>(
-						buffer.subarray(8, length + 8),
+						buffer.subarray(4, length + 4),
 					);
 					assert(tree instanceof DataTree);
 
 					const onDisk = await findRecord(tree);
 					if (onDisk) return onDisk;
 
-					if (seen.size - 1 === this.id) return;
+					if (BigInt(seen.size) === this.id + 1n) return;
 
 					position -= this.pagesize;
 				}
@@ -547,7 +559,7 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 	}
 
 	async findOneAndMap<T>(
-		id: number,
+		id: bigint,
 		mapper: ModelMapper<Schema, Instance, T>,
 	): Promise<T | undefined>;
 	async findOneAndMap<T>(
@@ -555,11 +567,11 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 		mapper: ModelMapper<Schema, Instance, T>,
 	): Promise<T | undefined>;
 	async findOneAndMap<T>(
-		search: number | SchemaPredicate<Schema>,
+		search: bigint | SchemaPredicate<Schema>,
 		mapper: ModelMapper<Schema, Instance, T>,
 	): Promise<T | undefined> {
 		const match =
-			typeof search === "number"
+			typeof search === "bigint"
 				? await this.findOne(search)
 				: await this.findOne(search);
 		if (!match) return;
@@ -572,7 +584,7 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 	}
 
 	async findOneAndUpdate(
-		id: number,
+		id: bigint,
 		updater: ModelUpdater<Schema, Instance>,
 	): Promise<Failure | Failure<ParseErrors<Schema>> | Return<Instance>>;
 	async findOneAndUpdate(
@@ -580,12 +592,12 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 		updater: ModelUpdater<Schema, Instance>,
 	): Promise<Failure | Failure<ParseErrors<Schema>> | Return<Instance>>;
 	async findOneAndUpdate(
-		search: number | SchemaPredicate<Schema>,
+		search: bigint | SchemaPredicate<Schema>,
 		updater: ModelUpdater<Schema, Instance>,
 	): Promise<Failure | Failure<ParseErrors<Schema>> | Return<Instance>> {
 		return this.writer.runExclusive(async () => {
 			const found =
-				typeof search === "number"
+				typeof search === "bigint"
 					? await this.findOne(search)
 					: await this.findOne(search);
 
@@ -593,12 +605,11 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 
 			try {
 				await updater(found);
-				const record = this.schema.parse(found);
 
-				const conflict = await this.#checkUniques(record, found.id);
+				const conflict = await this.#checkUniques(found.toJSON(), found.id);
 				if (conflict) return conflict;
 
-				this.tree.set({ id: found.id, lsn: this.nextLSN }, record);
+				this.tree.set({ id: found.id, lsn: this.nextLSN }, found.toJSON());
 
 				if (this.tree.size >= this.treesize) {
 					await this.#flush(this.lsn);
@@ -620,16 +631,16 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 		});
 	}
 
-	async findOneAndDelete(id: number): Promise<Instance | undefined>;
+	async findOneAndDelete(id: bigint): Promise<Instance | undefined>;
 	async findOneAndDelete(
 		predicate: SchemaPredicate<Schema>,
 	): Promise<Instance | undefined>;
 	async findOneAndDelete(
-		search: number | SchemaPredicate<Schema>,
+		search: bigint | SchemaPredicate<Schema>,
 	): Promise<Instance | undefined> {
 		return this.writer.runExclusive(async () => {
 			const found =
-				typeof search === "number"
+				typeof search === "bigint"
 					? await this.findOne(search)
 					: await this.findOne(search);
 
@@ -664,12 +675,17 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 			const predicate = typeof arg_1 === "function" ? arg_1 : undefined;
 			const options: FindOptions = typeof arg_1 === "object" ? arg_1 : (arg_2 ?? {});
 
-			const seen = new Set<number>();
+			const seen = new Set<bigint>();
 			const matches: Array<Instance> = [];
 
 			const match = async (tree: DataTree<Schema>) => {
 				for (const [key, record] of tree.entriesReversed()) {
-					if (seen.size - 1 === this.id) break;
+					if (
+						BigInt(seen.size) === this.id + 1n ||
+						matches.length >= (options.limit ?? Infinity)
+					) {
+						break;
+					}
 					if (seen.has(key.id)) continue;
 					seen.add(key.id);
 
@@ -688,7 +704,7 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 
 			await match(this.tree);
 
-			if (seen.size - 1 === this.id) {
+			if (BigInt(seen.size) === this.id + 1n) {
 				const limited = matches.slice(options.offset ?? 0, options.limit ?? Infinity);
 				return limited.length > 0 ? limited : undefined;
 			}
@@ -714,22 +730,22 @@ export class DataStore<Schema extends z.ZodObject, Instance extends ModelData<Sc
 			try {
 				await this.flusher.waitForUnlock();
 
-				while (position >= 0) {
+				while (position >= 8) {
 					const read = await fs.read(file, buffer, 0, this.pagesize, position);
 					if (read.bytesRead === 0) {
 						position -= this.pagesize;
 						continue;
 					}
 
-					const length = buffer.subarray(0, 8).readUInt32LE(0);
+					const length = buffer.subarray(0, 4).readUInt32LE(0);
 					const tree = this.encoder.decode<DataTree<Schema>>(
-						buffer.subarray(8, length + 8),
+						buffer.subarray(4, length + 4),
 					);
 					assert(tree instanceof DataTree);
 
 					await match(tree);
 
-					if (seen.size - 1 === this.id) break;
+					if (BigInt(seen.size) === this.id + 1n) break;
 
 					position -= this.pagesize;
 				}

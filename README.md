@@ -53,7 +53,7 @@ export class UserModel extends Model<UserSchema> {
   password!: string;
   attempts: number = 0
   
-  constructor(data: Data, id: number) {
+  constructor(data: Data, id: bigint) {
     super(UserSchema, id)
     this.hydrate(data)
   }
@@ -106,7 +106,6 @@ export const login = form(LoginSchema, async ({ email, password }) => {
   if (!user.authenticate(password)) {
     const update = await Users.findOneAndUpdate(user.id, (user) => {
       user.attempts++;
-      return user;
     });
     
     if (update.success && update.data.locked) {
@@ -163,10 +162,10 @@ const user = await Users.insert({ email: 'email@email.com', password: '$omePassw
 
 - `findOne`: returns one model from the database
 ```ts
-// ID Query
-const user = await Users.findOne(0);
+// ID Query, using a bigint
+const user = await Users.findOne(0n);
 // or, Predicate Search, returning the first to match
-const user = await Users.findOne((user, id) => user.email === email);
+const user = await Users.findOne((record, id) => record.email === email);
 
 // Returns UserModel | undefined if not found
 ```
@@ -176,12 +175,15 @@ const user = await Users.findOne((user, id) => user.email === email);
 // No Parameter, returning all models from the database
 const users = await Users.find();
 // or, Predicate Search, returning all matching models from the database
-const users = await Users.find((user, id) => id > 10);
+const users = await Users.find((record, id) => id > 10n);
 
 // Pagination
 const users = await Users.find({ offset: 5, limit: 10 });
 // or
-const users = await Users.find((user, id) => user.attempts < 3, { offset: 5, limit: 10 });
+const users = await Users.find((record, id) => record.attempts < 3, {
+	offset: 5,
+	limit: 10,
+});
 
 // Returns Array<UserModel> | undefined if none are found or pagination is out of bounds
 ```
@@ -190,14 +192,17 @@ const users = await Users.find((user, id) => user.attempts < 3, { offset: 5, lim
 
 - `findOneAndUpdate`: finds one record, update it, and return its model
 ```ts
-// ID Query
-const update = await Users.findOneAndUpdate(0, (user) => {
+// ID Query, using a bigint
+const update = await Users.findOneAndUpdate(0n, (user) => {
   user.email = 'newemail@email.com'; // validation occurs at the property-level in its setter-method
 });
 // or, Predicate Search, updating the first match
-const update = await Users.findOneAndUpdate((user, id) => user.email === email, (user) => {
-  user.email = 'newemail@email.com';
-});
+const update = await Users.findOneAndUpdate(
+	(record, id) => record.email === email,
+	(user) => {
+		user.email = "newemail@email.com";
+	},
+);
 
 // Returns { success: false, errors: Record<keyof Schema | 'general', string> || { success: true, data: UserModel }
 if (!update.success) {
@@ -213,9 +218,12 @@ const update = await Users.findAndUpdate((user) => {
   user.attempts = 3; // locks all users
 });
 // or, Predicate Search, updating the matching records
-const update = await Users.findAndUpdate((user, id) => user.attempts >= 3, (user) => {
-  user.attempts = 0; // unlocks all locked users
-});
+const update = await Users.findAndUpdate(
+	(record, id) => record.attempts >= 3,
+	(user) => {
+		user.attempts = 0; // unlocks all locked users
+	},
+);
 
 // Returns { success: false, errors: Record<keyof Schema | 'general', string> } || { success: true, data: Array<UserModel> }
 if (!update.success) {
@@ -228,10 +236,10 @@ const users = update.data;
 
 - `findOneAndDelete`: finds one record, delete it, and return its model
 ```ts
-// ID Query
-const deletion = await Users.findOneAndDelete(0);
+// ID Query, using a bigint
+const deletion = await Users.findOneAndDelete(0n);
 // or, Predicate Search, updating the first match
-const deletion = await Users.findOneAndDelete((user, id) => user.email === email);
+const deletion = await Users.findOneAndDelete((record, id) => record.email === email);
 
 // Returns UserModel | undefined
 ```
@@ -240,7 +248,7 @@ const deletion = await Users.findOneAndDelete((user, id) => user.email === email
 ```ts
 // Must supply query to reduce chance of collection deletion
 // Predicate Search, deleting the matching records
-const deletion = await Users.findAndDelete((user, id) => user.attempts >= 3);
+const deletion = await Users.findAndDelete((record, id) => record.attempts >= 3);
 
 // Returns { success: false, errors: Record<keyof Schema | 'general', string> } || { success: true, data: Array<UserModel> }
 if (!deletion.success) {
@@ -253,16 +261,19 @@ const users = deletion.data;
 
 - `findOneAndMap`: finds a record, transform it, and return transformed data
 ```ts
-// ID Query
-const users = await Users.findOneAndMap(0, (user) => {
+// ID Query, using a bigint
+const users = await Users.findOneAndMap(0n, (user) => {
   if (user.locked) return `User with email ${user.email} locked`;
   return `User with email ${user.email} unlocked`;
 });
 // or, Predicate Search, transforming the first matching model
-const users = await Users.findOneAndMap((user, id) => user.attempts >= 3, (user) => {
-  if (user.locked) return `User with email ${user.email} locked`;
-  return `User with email ${user.email} unlocked`;
-});
+const users = await Users.findOneAndMap(
+	(record, id) => record.attempts >= 3,
+	(user) => {
+		if (user.locked) return `User with email ${user.email} locked`;
+		return `User with email ${user.email} unlocked`;
+	},
+);
 
 // Returns UserModel | undefined if no matches
 ```
@@ -275,21 +286,30 @@ const users = await Users.findAndMap((user) => {
   return `User with email ${user.email} unlocked`;
 });
 // or, Predicate Search, returning all matching models from the database
-const users = await Users.findAndMap((user, id) => user.attempts >= 3, (user) => {
-  if (user.locked) return `User with email ${user.email} locked`;
-  return `User with email ${user.email} unlocked`;
+const users = await Users.findAndMap(
+  (record, id) => record.attempts >= 3, 
+  (user) => {
+    if (user.locked) return `User with email ${user.email} locked`;
+    return `User with email ${user.email} unlocked`;
 });
 
 // Pagination
-const users = await Users.findAndMap((user) => {
-  if (user.locked) return `User with email ${user.email} locked`;
-  return `User with email ${user.email} unlocked`;
-}, { offset: 5, limit: 10 });
+const users = await Users.findAndMap(
+	(user) => {
+		if (user.locked) return `User with email ${user.email} locked`;
+		return `User with email ${user.email} unlocked`;
+	},
+	{ offset: 5, limit: 10 },
+);
 // or
-const users = await Users.findAndMap((user, id) => user.attempts >= 3, (user) => {
-  if (user.locked) return `User with email ${user.email} locked`;
-  return `User with email ${user.email} unlocked`;
-}, { offset: 5, limit: 10 });
+const users = await Users.findAndMap(
+	(user, id) => user.attempts >= 3,
+	(user) => {
+		if (user.locked) return `User with email ${user.email} locked`;
+		return `User with email ${user.email} unlocked`;
+	},
+	{ offset: 5, limit: 10 },
+);
 
 // Returns Array<UserModel> | undefined if no matches or pagination is out of bounds
 ```
@@ -306,8 +326,8 @@ const unlocked = await Users.count((user, id) => user.attempts < 3);
 
 - `exists`: returns a count of how many records match
 ```ts
-// ID Query
-const exists = await Users.exists(0);
+// ID Query, using bigint
+const exists = await Users.exists(0n);
 // or, Predicate Search, returning on the first match
 const exists = await Users.exists((user, id) => user.email === 'email@email.com');
 ```

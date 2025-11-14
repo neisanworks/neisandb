@@ -7,7 +7,7 @@ import { DataBase } from "./database.js";
 import { Model } from "./model.js";
 
 test("DataBase Test", async () => {
-	const database = new DataBase();
+	const database = new DataBase({ directory: "src/neisandb" });
 
 	const UserSchema = z.object({
 		email: z.email(),
@@ -21,7 +21,7 @@ test("DataBase Test", async () => {
 		password!: string;
 		attempts: number = 0;
 
-		constructor(data: Data, id: number) {
+		constructor(data: Data, id: bigint) {
 			super(UserSchema, id);
 			this.hydrate(data);
 		}
@@ -84,7 +84,7 @@ test("DataBase Test", async () => {
 		user.email = "email";
 	}).toThrow(z.ZodError);
 
-	const update = await Users.findOneAndUpdate(0, (user) => {
+	const update = await Users.findOneAndUpdate(0n, (user) => {
 		user.email = "newemail@email.com";
 	});
 	expect(update.success).toBe(true);

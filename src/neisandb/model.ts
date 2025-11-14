@@ -3,10 +3,10 @@ import z from "zod/v4";
 import { ID } from "../types.js";
 
 export abstract class Model<Schema extends z.ZodObject> {
-	readonly id!: number;
+	readonly id!: bigint;
 	private schema!: Schema;
 
-	constructor(schema: Schema, id: number) {
+	constructor(schema: Schema, id: bigint) {
 		id = ID(id);
 
 		Object.defineProperties(this, {
